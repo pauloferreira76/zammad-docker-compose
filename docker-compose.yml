@@ -2,6 +2,8 @@ version: "3.8"
 
 x-shared:
   zammad-service: &zammad-service
+    image: ${IMAGE_REPO:-ghcr.io/zammad/zammad}:${VERSION:-6.5.1}
+    restart: ${RESTART:-always}
     environment: &zammad-environment
       MEMCACHE_SERVERS: ${MEMCACHE_SERVERS:-zammad-memcached:11211}
       POSTGRESQL_DB: ${POSTGRES_DB:-zammad_production}
@@ -10,13 +12,14 @@ x-shared:
       POSTGRESQL_PASS: ${POSTGRES_PASS:-zammad}
       POSTGRESQL_PORT: ${POSTGRES_PORT:-5432}
       POSTGRESQL_OPTIONS: ${POSTGRESQL_OPTIONS:-?pool=50}
-      TZ: "${TZ:-America/Sao_Paulo}"
       REDIS_URL: ${REDIS_URL:-redis://zammad-redis:6379}
       BACKUP_DIR: "${BACKUP_DIR:-/var/tmp/zammad}"
       BACKUP_TIME: "${BACKUP_TIME:-03:00}"
       HOLD_DAYS: "${HOLD_DAYS:-10}"
-    image: ${IMAGE_REPO:-ghcr.io/zammad/zammad}:${VERSION:-6.5.1}
-    restart: ${RESTART:-always}
+      TZ: "${TZ:-America/Sao_Paulo}"
+      # 👇 Importante: garante que o Rails/Zammad saiba que está atrás de HTTPS
+      NGINX_SERVER_SCHEME: https
+      RAILS_ENV: production
     volumes:
       - zammad-storage:/opt/zammad/storage
     depends_on:
@@ -55,12 +58,12 @@ services:
   zammad-elasticsearch:
     image: elasticsearch:${ELASTICSEARCH_VERSION:-8.19.2}
     restart: ${RESTART:-always}
-    volumes:
-      - elasticsearch-data:/usr/share/elasticsearch/data
     environment:
       discovery.type: single-node
       xpack.security.enabled: 'false'
       ES_JAVA_OPTS: ${ELASTICSEARCH_JAVA_OPTS:--Xms1g -Xmx1g}
+    volumes:
+      - elasticsearch-data:/usr/share/elasticsearch/data
 
   zammad-init:
     <<: *zammad-service
@@ -71,8 +74,8 @@ services:
     user: 0:0
 
   zammad-memcached:
-    command: memcached -m 256M
     image: memcached:${MEMCACHE_VERSION:-1.6.39-alpine}
+    command: memcached -m 256M
     restart: ${RESTART:-always}
 
   zammad-nginx:
@@ -83,24 +86,27 @@ services:
       - proxy
     labels:
       - "traefik.enable=true"
+      # 🔒 HTTPS principal
       - "traefik.http.routers.zammad.rule=Host(`zammad.monteiroaranha.com.br`)"
       - "traefik.http.routers.zammad.entrypoints=websecure"
       - "traefik.http.routers.zammad.tls=true"
       - "traefik.http.routers.zammad.tls.certificates[0].certFile=/certs/fullchain.pem"
       - "traefik.http.routers.zammad.tls.certificates[0].keyFile=/certs/privkey.pem"
+      # 🔄 Redirect HTTP -> HTTPS
       - "traefik.http.routers.zammad-redirect.rule=Host(`zammad.monteiroaranha.com.br`)"
       - "traefik.http.routers.zammad-redirect.entrypoints=web"
       - "traefik.http.routers.zammad-redirect.middlewares=zammad-https-redirect"
       - "traefik.http.middlewares.zammad-https-redirect.redirectscheme.scheme=https"
+      # 🚪 Porta correta
       - "traefik.http.services.zammad.loadbalancer.server.port=8080"
 
   zammad-postgresql:
+    image: postgres:${POSTGRES_VERSION:-15-alpine}
+    restart: ${RESTART:-always}
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-zammad_production}
       POSTGRES_USER: ${POSTGRES_USER:-zammad}
       POSTGRES_PASSWORD: ${POSTGRES_PASS:-zammad}
-    image: postgres:${POSTGRES_VERSION:-15-alpine}
-    restart: ${RESTART:-always}
     volumes:
       - postgresql-data:/var/lib/postgresql/data
 
@@ -124,15 +130,10 @@ services:
 
 volumes:
   elasticsearch-data:
-    driver: local
   postgresql-data:
-    driver: local
   redis-data:
-    driver: local
   zammad-backup:
-    driver: local
   zammad-storage:
-    driver: local
 
 networks:
   default:
