@@ -1,150 +1,141 @@
 version: "3.8"
 
 x-shared:
-zammad-service: &zammad-service
-environment: &zammad-environment
-MEMCACHE_SERVERS: ${MEMCACHE_SERVERS:-zammad-memcached:11211}
-POSTGRESQL_DB: ${POSTGRES_DB:-zammad_production}
-POSTGRESQL_HOST: ${POSTGRES_HOST:-zammad-postgresql}
-POSTGRESQL_USER: ${POSTGRES_USER:-zammad}
-POSTGRESQL_PASS: ${POSTGRES_PASS:-zammad}
-POSTGRESQL_PORT: ${POSTGRES_PORT:-5432}
-POSTGRESQL_OPTIONS: ${POSTGRESQL_OPTIONS:-?pool=50}
-TZ: "${TZ:-America/Sao_Paulo}"
-REDIS_URL: ${REDIS_URL:-redis://zammad-redis:6379}
-BACKUP_DIR: "${BACKUP_DIR:-/var/tmp/zammad}"
-BACKUP_TIME: "${BACKUP_TIME:-03:00}"
-HOLD_DAYS: "${HOLD_DAYS:-10}"
-image: ${IMAGE_REPO:-ghcr.io/zammad/zammad}:${VERSION:-6.5.1}
-restart: ${RESTART:-always}
-volumes:
-- zammad-storage:/opt/zammad/storage
-depends_on:
-- zammad-memcached
-- zammad-postgresql
-- zammad-redis
+  zammad-service: &zammad-service
+    environment: &zammad-environment
+      MEMCACHE_SERVERS: ${MEMCACHE_SERVERS:-zammad-memcached:11211}
+      POSTGRESQL_DB: ${POSTGRES_DB:-zammad_production}
+      POSTGRESQL_HOST: ${POSTGRES_HOST:-zammad-postgresql}
+      POSTGRESQL_USER: ${POSTGRES_USER:-zammad}
+      POSTGRESQL_PASS: ${POSTGRES_PASS:-zammad}
+      POSTGRESQL_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRESQL_OPTIONS: ${POSTGRESQL_OPTIONS:-?pool=50}
+      TZ: "${TZ:-America/Sao_Paulo}"
+      REDIS_URL: ${REDIS_URL:-redis://zammad-redis:6379}
+      BACKUP_DIR: "${BACKUP_DIR:-/var/tmp/zammad}"
+      BACKUP_TIME: "${BACKUP_TIME:-03:00}"
+      HOLD_DAYS: "${HOLD_DAYS:-10}"
+    image: ${IMAGE_REPO:-ghcr.io/zammad/zammad}:${VERSION:-6.5.1}
+    restart: ${RESTART:-always}
+    volumes:
+      - zammad-storage:/opt/zammad/storage
+    depends_on:
+      - zammad-memcached
+      - zammad-postgresql
+      - zammad-redis
 
 services:
-traefik:
-image: traefik:v2.11
-container_name: traefik
-command:
-- --api.dashboard=false
-- --entrypoints.web.address=:80
-- --entrypoints.websecure.address=:443
-- --providers.docker=true
-- --providers.docker.exposedbydefault=false
-- --certificatesresolvers.le.acme.email=paulo.bs4it@monteiroaranha.com.br
-- --certificatesresolvers.le.acme.storage=/letsencrypt/acme.json
-- --certificatesresolvers.le.acme.httpchallenge=true
-- --certificatesresolvers.le.acme.httpchallenge.entrypoint=web
-ports:
-- 80:80
-- 443:443
-volumes:
-- /var/run/docker.sock:/var/run/docker.sock:ro
-- traefik-letsencrypt:/letsencrypt
-networks:
-- proxy
-restart: always
+  traefik:
+    image: traefik:v2.11
+    container_name: traefik
+    command:
+      - --api.dashboard=false
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+    ports:
+      - 80:80
+      - 443:443
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /etc/letsencrypt/live/zammad.monteiroaranha.com.br/:/certs:ro
+    networks:
+      - proxy
+    restart: always
 
-zammad-backup:
-<<: *zammad-service
-command: ["zammad-backup"]
-volumes:
-- zammad-backup:/var/tmp/zammad
-- zammad-storage:/opt/zammad/storage:ro
-user: 0:0
+  zammad-backup:
+    <<: *zammad-service
+    command: ["zammad-backup"]
+    volumes:
+      - zammad-backup:/var/tmp/zammad
+      - zammad-storage:/opt/zammad/storage:ro
+    user: 0:0
 
-zammad-elasticsearch:
-image: elasticsearch:${ELASTICSEARCH_VERSION:-8.19.2}
-restart: ${RESTART:-always}
-volumes:
-- elasticsearch-data:/usr/share/elasticsearch/data
-environment:
-discovery.type: single-node
-xpack.security.enabled: 'false'
-ES_JAVA_OPTS: ${ELASTICSEARCH_JAVA_OPTS:--Xms1g -Xmx1g}
+  zammad-elasticsearch:
+    image: elasticsearch:${ELASTICSEARCH_VERSION:-8.19.2}
+    restart: ${RESTART:-always}
+    volumes:
+      - elasticsearch-data:/usr/share/elasticsearch/data
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: 'false'
+      ES_JAVA_OPTS: ${ELASTICSEARCH_JAVA_OPTS:--Xms1g -Xmx1g}
 
-zammad-init:
-<<: *zammad-service
-command: ["zammad-init"]
-depends_on:
-- zammad-postgresql
-restart: on-failure
-user: 0:0
+  zammad-init:
+    <<: *zammad-service
+    command: ["zammad-init"]
+    depends_on:
+      - zammad-postgresql
+    restart: on-failure
+    user: 0:0
 
-zammad-memcached:
-command: memcached -m 256M
-image: memcached:${MEMCACHE_VERSION:-1.6.39-alpine}
-restart: ${RESTART:-always}
+  zammad-memcached:
+    command: memcached -m 256M
+    image: memcached:${MEMCACHE_VERSION:-1.6.39-alpine}
+    restart: ${RESTART:-always}
 
-zammad-nginx:
-<<: *zammad-service
-command: ["zammad-nginx"]
-expose:
-- "${NGINX_PORT:-8080}"
-depends_on:
-- zammad-railsserver
-networks:
-- default
-- proxy
-labels:
-- "traefik.enable=true"
-- "traefik.http.routers.zammad.rule=Host(zammad.monteiroaranha.com.br)"
-- "traefik.http.routers.zammad.entrypoints=websecure"
-- "traefik.http.routers.zammad.tls=true"
-- "traefik.http.routers.zammad.tls.certresolver=le"
-- "traefik.http.services.zammad.loadbalancer.server.port=8080"
-- "traefik.http.routers.zammad-redirect.rule=Host(zammad.monteiroaranha.com.br)"
-- "traefik.http.routers.zammad-redirect.entrypoints=web"
-- "traefik.http.routers.zammad-redirect.middlewares=zammad-https-redirect"
-- "traefik.http.middlewares.zammad-https-redirect.redirectscheme.scheme=https"
+  zammad-nginx:
+    <<: *zammad-service
+    command: ["zammad-nginx"]
+    networks:
+      - default
+      - proxy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.zammad.rule=Host(`zammad.monteiroaranha.com.br`)"
+      - "traefik.http.routers.zammad.entrypoints=websecure"
+      - "traefik.http.routers.zammad.tls=true"
+      - "traefik.http.routers.zammad.tls.certificates[0].certFile=/certs/fullchain.pem"
+      - "traefik.http.routers.zammad.tls.certificates[0].keyFile=/certs/privkey.pem"
+      - "traefik.http.routers.zammad-redirect.rule=Host(`zammad.monteiroaranha.com.br`)"
+      - "traefik.http.routers.zammad-redirect.entrypoints=web"
+      - "traefik.http.routers.zammad-redirect.middlewares=zammad-https-redirect"
+      - "traefik.http.middlewares.zammad-https-redirect.redirectscheme.scheme=https"
+      - "traefik.http.services.zammad.loadbalancer.server.port=8080"
 
-zammad-postgresql:
-environment:
-POSTGRES_DB: ${POSTGRES_DB:-zammad_production}
-POSTGRES_USER: ${POSTGRES_USER:-zammad}
-POSTGRES_PASSWORD: ${POSTGRES_PASS:-zammad}
-image: postgres:${POSTGRES_VERSION:-15-alpine}
-restart: ${RESTART:-always}
-volumes:
-- postgresql-data:/var/lib/postgresql/data
+  zammad-postgresql:
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-zammad_production}
+      POSTGRES_USER: ${POSTGRES_USER:-zammad}
+      POSTGRES_PASSWORD: ${POSTGRES_PASS:-zammad}
+    image: postgres:${POSTGRES_VERSION:-15-alpine}
+    restart: ${RESTART:-always}
+    volumes:
+      - postgresql-data:/var/lib/postgresql/data
 
-zammad-railsserver:
-<<: *zammad-service
-command: ["zammad-railsserver"]
+  zammad-railsserver:
+    <<: *zammad-service
+    command: ["zammad-railsserver"]
 
-zammad-redis:
-image: redis:${REDIS_VERSION:-7.4.5-alpine}
-restart: ${RESTART:-always}
-volumes:
-- redis-data:/data
+  zammad-redis:
+    image: redis:${REDIS_VERSION:-7.4.5-alpine}
+    restart: ${RESTART:-always}
+    volumes:
+      - redis-data:/data
 
-zammad-scheduler:
-<<: *zammad-service
-command: ["zammad-scheduler"]
+  zammad-scheduler:
+    <<: *zammad-service
+    command: ["zammad-scheduler"]
 
-zammad-websocket:
-<<: *zammad-service
-command: ["zammad-websocket"]
+  zammad-websocket:
+    <<: *zammad-service
+    command: ["zammad-websocket"]
 
 volumes:
-elasticsearch-data:
-driver: local
-postgresql-data:
-driver: local
-redis-data:
-driver: local
-zammad-backup:
-driver: local
-zammad-storage:
-driver: local
-traefik-letsencrypt:
-driver: local
+  elasticsearch-data:
+    driver: local
+  postgresql-data:
+    driver: local
+  redis-data:
+    driver: local
+  zammad-backup:
+    driver: local
+  zammad-storage:
+    driver: local
 
 networks:
-default:
-driver: bridge
-proxy:
-driver: bridge
+  default:
+    driver: bridge
+  proxy:
+    driver: bridge
